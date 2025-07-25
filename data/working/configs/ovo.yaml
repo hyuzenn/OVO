@@ -38,9 +38,11 @@ semantic:
     #min_mask_region_area: 100
   clip:
     use_half: True
-    embed_type: learned #fixed_weights # 
-    model_card: SigLIP-384 #ViT-H-14 #
-    mask_res: 384
+    embed_type: TextRegion # learned #fixed_weights # 
+    model_card: "PE-Core-L14-336" # SigLIP-384 #ViT-H-14 #
+    mask_res: 336 # 384
     weights_predictor_path: data/input/weights_predictor/base
-    k_top_views: 10
+    k_top_views: 5 #10
+    mv_fuser: True #False
+    mv_fuser_ckpt: "20250725_1155"
   kf_queue_delay: 10

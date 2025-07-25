@@ -3,6 +3,12 @@ from typing import Any, Dict, List
 import numpy as np
 import torch
 import heapq
+
+def l1_medoid(self, clips):
+    l1_distances = torch.abs(clips-clips.permute(1,0,2)).sum((1,2))
+    kf = l1_distances.argmin()
+    return clips[:,kf], kf
+
 class Instance3D:
     """
     3D instance class.
@@ -25,7 +31,7 @@ class Instance3D:
         top_kf (list): A Heap of top keyframes ordered by their mask area.
     """
     n_top_kf: int = 0
-
+    mv_fusion = l1_medoid
     def __init__(self, id: int, kf_id: int | None = None, points_ids: List[int] = None, mask_area: int = 0):
         self.id = id
         self.clip_feature = None
@@ -35,7 +41,7 @@ class Instance3D:
         self.top_kf = []
         if kf_id is not None:
             self.update(points_ids, kf_id, mask_area)
-
+    
     def update(self, points_ids: List[int], kf_id: int, area: int) -> None:
         """ Add repeated
         Args:
@@ -140,13 +146,13 @@ class Instance3D:
                 
             if len(clips) == 0:
                 return
-            
             clips = torch.vstack(clips)
-            clips = clips[:,None]
-            l1_distances = torch.abs(clips-clips.permute(1,0,2)).sum((1,2))
-            kf = l1_distances.argmin()
-            self.clip_feature = clips[kf]
-            self.clip_feature_kf = kf
+             
+            if len(clips) == 1:
+                self.clip_feature, self.clip_feature_kf = clips[0], 0
+            else:
+                self.clip_feature, self.clip_feature_kf = self.mv_fusion(clips[None])
+
             self.to_update = False
 
     def export(self, debug_info: bool = False) -> Dict[str, Any]:

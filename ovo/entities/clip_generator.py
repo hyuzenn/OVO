@@ -8,6 +8,12 @@ from ..utils import segment_utils
 
 from .clips_merging import WeightsPredictorMerger
 
+clips_merging_dir="/home/tberriel/Workspaces/semsplat_ws/clips_merging"
+import sys
+sys.path.append(clips_merging_dir)
+from clips_merging.models.text_region import CLIPWithSAM2ForSegmentation
+from clips_merging.models.vlm import VLM
+
 class CLIPGenerator:
     def __init__(self, config: Dict, device: str = "cuda"):
         self.config = config
@@ -32,11 +38,27 @@ class CLIPGenerator:
             w_masked = config.get("w_masked", 0.4418)
             w_global = config.get("w_global", 0.1)
             self.clips_fusion = lambda clip_g, clip_seg, clip_bbox: clip_utils.fuse_clips(clip_g, clip_seg, clip_bbox, self.embed_type, w_masked, w_global)
-
+      
         self.model_card = config.get("model_card", "SigLIP-384")
-        self.model, self.tokenizer, self.preprocess, clip_dim = clip_utils.load_clip_model(self.model_card, config.get("use_half", False))
-        self.clip_dim=clip_dim        
-        
+        if self.embed_type == "TextRegion":
+            vlm = VLM({   
+                "model_card": self.model_card,      
+            })
+            self.textregion = CLIPWithSAM2ForSegmentation(
+            vlm, 
+            resize_method=config.get("resize_method", 'multi_resolution'),
+            remove_global_patch=config.get("remove_global_patch", False),
+            crop_size=vlm.mask_res,
+            project_and_normalize=config.get("project_and_normalize", True),
+            )
+            self.model = vlm.model
+            self.tokenizer = vlm.tokenizer
+            self.preprocess = vlm.preprocess
+            self.clip_dim = 1024
+        else:
+            self.model, self.tokenizer, self.preprocess, clip_dim = clip_utils.load_clip_model(self.model_card, config.get("use_half", False))
+            self.clip_dim=clip_dim  
+
         if self.model_card[:6] == "SigLIP":
             self.get_similarity = clip_utils.siglip_cosine_similarity
 
@@ -117,6 +139,8 @@ class CLIPGenerator:
         Return:
             - climp_embeds: list of numpy arrays with dim (N, self.clip_dim).        
         """
+        if self.embed_type == "TextRegion":
+            return self.textregion.predict(image/255., binary_maps)
         if self.embed_type != "vanilla":
             if len(image.shape) ==3:
                 image = image[None, ...]
