@@ -44,5 +44,5 @@ semantic:
     weights_predictor_path: data/input/weights_predictor/base
     k_top_views: 5 #10
     mv_fuser: True #False
-    mv_fuser_ckpt: "20250725_1155"
+    mv_fuser_ckpt: "20250725_1200"
   kf_queue_delay: 10
