@@ -62,6 +62,11 @@ class OVO:
         self.next_ins_id = 0
         self.kf_id = 0
 
+        # Sem loop-closure parameters
+        self.th_centroid = config.get("th_centroid", 1.5)
+        self.th_cossim = config.get("th_cossim", 0.81)
+        self.th_points = config.get("th_points", 0.1)
+
         print('Semantic config')
         pprint.PrettyPrinter().pprint(config)
 
@@ -363,7 +368,18 @@ class OVO:
     def update_map(self, map_data, kfs):
         # 0. clean the queue
         self.complete_semantic_info()
-        points_3d, points_ids, points_ins_ids = map_data
+        points_3d, _, points_ins_ids = map_data
+
+        # 0.1 Remove deleted_kfs : 
+        deleted_kfs = []
+        for i, kf in enumerate(self.keyframes["frame_id"]):
+            if kf not in kfs:
+                deleted_kfs.append(kf)
+                if kf in self.keyframes["ins_descriptors"]: # Not all Keyframes will have descriptors associated
+                    self.keyframes["ins_descriptors"].pop(kf)
+                self.keyframes["frame_id"][i] = "Deleted" #deleting from self.keyframes["frame_id"] would require a checkpoint refactor to change it from list to dict
+                # self.keyframes["ins_maps"] # This variable is for Debug, better to not remove it
+
         # 1. remove 3D instances that are not in pcd_obj_ids, despite some instances having been detected with > than 100 points, the deletion of Keyframes, can reduce their support to 1 or 2 points. TODO: We should 1) recompute the support of this instances by projecting the full pcd into them or 2) just remove them.
         objects_list = []
         objects_to_del = []
@@ -375,6 +391,12 @@ class OVO:
                 objects_to_del.append(self.objects[ins_id])
         # 2. Fuse 3D instances that fulfill a condition. 
         # TODO: optimize brute-force approach (compare all instances to each-other)
+        #precompute pointcloud
+        obj_pcds = {}
+        for instance in objects_list:
+            obj_pcd = points_3d[points_ins_ids == instance.id]
+            obj_pcds[instance.id] = [obj_pcd, obj_pcd.mean(axis=0)]
+
         objects = {}
         fused_objects = {}
         for i, instance1 in enumerate(objects_list):
@@ -383,7 +405,7 @@ class OVO:
             for instance2 in objects_list[i+1:]:
                 if instance2.id in fused_objects:
                     continue
-                elif instance_utils.same_instance(instance1, instance2, map_data):
+                elif instance_utils.same_instance(instance1, instance2, obj_pcds[instance1.id], obj_pcds[instance2.id], self.th_centroid, self.th_cossim, self.th_points):
                     instance1, points_ins_ids = instance_utils.fuse_instances(instance1, instance2, map_data)
                     fused_objects[instance2.id] = instance1.id
             objects[instance1.id] = instance1
@@ -391,7 +413,7 @@ class OVO:
         # 3. Updated saved info
         for id2, id1 in fused_objects.items():
             for kf in self.objects[id2].kfs_ids:
-                if id2 not in self.keyframes["ins_descriptors"][kf]:
+                if kf not in self.keyframes["ins_descriptors"] or id2 not in self.keyframes["ins_descriptors"][kf]:
                     continue
                 # If both ins were observed in the same frame, the ins_maps should be fused and descriptors recomputed. Neverthless, it is not probable that two instances seen in the same kf will fulfill the distance threshold
                 ins_descriptor2  = self.keyframes["ins_descriptors"][kf].pop(id2)

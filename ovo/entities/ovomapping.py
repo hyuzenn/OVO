@@ -57,11 +57,18 @@ class OVOSemMap():
         cam_intrinsics =  torch.tensor(self.dataset.intrinsics.astype(np.float32), device=self.device)
         config["semantic"]["debug_info"] = self.config.get("debug_info", False)
 
-        self.slam_backbone = get_slam_backbone(config, self.dataset, cam_intrinsics)
         self.ovo = OVO(config["semantic"], self.logger, config["data"]["scene_name"], cam_intrinsics, device=self.device)
 
         if config["semantic"]["sam"].get("precomputed", False) or config["semantic"]["sam"].get("precompute", False):
             self.ovo.mask_generator.precompute(self.dataset, self.segment_every)
+        self.slam_backbone = get_slam_backbone(config, self.dataset, cam_intrinsics)
+
+
+        self.first_frame = 0
+        if self.config.get("restore_map", False):
+            assert config["slam"].get("slam_module","vanilla") == "vanilla", "Restoring representation only implemented for 'vanilla' configuration!"
+            self.restore_representation()
+            self.first_frame = list(self.slam_backbone.estimated_c2ws.keys())[-1]+1
 
     def _setup_output_path(self, output_path: str) -> None:
         """ Sets up the output path for saving results based on the provided configuration. 
@@ -87,6 +94,28 @@ class OVOSemMap():
         }
         io_utils.save_dict_to_ckpt(
             submap_ckpt, "ovo_map.ckpt", directory=self.output_path)    
+        if self.config["slam"].get("save_estimated_cam", False):
+            c2w = self.slam_backbone.get_cam_dict()
+            with open(self.output_path / "estimated_c2w.npy", "wb") as f:
+                torch.save(c2w, f)
+
+    def restore_representation(self) -> None:
+        ckpt_path = self.output_path / "ovo_map.ckpt"
+        assert ckpt_path.exists(), f"Missing required checkpoint to restore: {ckpt_path}"
+        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+
+        self.ovo.restore_dict(ckpt["ovo_map_params"], debug_info=self.config.get("debug", False))
+        self.slam_backbone.set_map_dict(ckpt["map_params"])
+        
+        c2w_path = self.output_path / "estimated_c2w.npy"
+        if c2w_path.exists():
+            c2w = torch.load(c2w_path)
+            self.slam_backbone.set_cam_dict(c2w)
+        else:
+            print(f"Missing cameras positions to restore: {c2w_path}")
+            print("Resotring without cameras positions!")
+    
+
 
     def run(self) -> None:
         """ Starts the main program flow, including tracking and mapping. If self.config["vis"]["stream"] is True, a Open3D visualizer is launched in a parallel process.
@@ -94,6 +123,7 @@ class OVOSemMap():
 
         stream = self.config["vis"]["stream"]
         show_stream = self.config["vis"]["show_stream"]
+        spf = []
 
         with mp.Manager() as manager: 
             if stream:
@@ -106,7 +136,7 @@ class OVOSemMap():
 
             torch.cuda.synchronize()
             t_start = time.time()
-            for frame_id in range(len(self.dataset)):
+            for frame_id in range(self.first_frame, len(self.dataset)):
                 if self.track_every == 1 or frame_id%self.track_every==0 or frame_id%self.map_every==0 or frame_id%self.segment_every==0:
                     frame_data = self.dataset[frame_id]
                     self.slam_backbone.track_camera(frame_data)
@@ -115,18 +145,24 @@ class OVOSemMap():
                     missing_depth = not (frame_data[2]>0).any()
                     if estimated_c2w is None or missing_depth :
                         continue
-
+                    t_lc = 0
                     if frame_id % self.map_every == 0 or self.config["slam"]["slam_module"] == "orbslam2":
                         self.slam_backbone.map(frame_data, estimated_c2w)
                         if self.slam_backbone.map_updated:
+                            torch.cuda.synchronize()
+                            t_lc_i = time.time()
                             map_data = self.slam_backbone.get_map()
                             kfs = self.slam_backbone.get_kfs()
                             updated_points_ins_ids = self.ovo.update_map(map_data, kfs)
                             if updated_points_ins_ids is not None:
                                self.slam_backbone.update_pcd_obj_ids(updated_points_ins_ids)
                             self.slam_backbone.map_updated = False
-
+                            torch.cuda.synchronize()
+                            t_lc = time.time() - t_lc_i
+                            print(f"Sem LC update took {t_lc};")
+                    t_sem = 0
                     if frame_id % self.segment_every == 0:
+                        t_sem_i = time.time()
                         with torch.inference_mode() and torch.autocast(device_type=self.device, dtype=torch.bfloat16):
                             if len(frame_data)==5:
                                 image = frame_data[-1]
@@ -149,6 +185,8 @@ class OVOSemMap():
                             self.ovo.compute_semantic_info()
                             self.logger.log_memory_usage(frame_id)
 
+                        t_sem = time.time()-t_sem_i
+                        
                         if stream:
                             pcd, _, pcd_obj_ids = self.slam_backbone.get_map()
                             c2w = self.slam_backbone.get_c2w(frame_id)
@@ -167,6 +205,9 @@ class OVOSemMap():
                                 with query_flag.get_lock():
                                     query_pipe.send(query_map)
                                     query_flag.value = 2
+                    if t_sem+t_lc > 0:
+                        spf.append(t_sem + t_lc)         
+
                     if frame_id % 50 == 0:
                         gc.collect()
                 
@@ -176,7 +217,7 @@ class OVOSemMap():
             t_end = time.time()
             fps = len(self.dataset)/self.segment_every/(t_end-t_start)
             if stream and p.is_alive():
-                while mpqueue.qsize()>0:
+                while mpqueue.qsize()>0 and p.is_alive():
                     if query_flag.value == 1:
                         query = query_pipe.recv()
                         query_map = self.ovo.query(query).cpu().numpy()
@@ -187,6 +228,7 @@ class OVOSemMap():
                 time.sleep(5)
                 
         self.logger.log_fps(fps)
+        self.logger.log_spf(spf)
         self.logger.log_max_memory_usage()
         self.logger.write_stats()
         self.logger.print_final_stats()
