@@ -9,6 +9,15 @@ def l1_medoid(self, clips):
     kf = l1_distances.argmin()
     return clips[:,kf], kf
 
+def cossim_medoid(self, clips):
+    cossim_distances = torch.cosine_similarity(clips,clips.permute(1,0,2), dim=-1).sum(-1)
+    kf = cossim_distances.argmin()
+    return clips[:,kf], kf
+
+def avg_pooling(self, clips):
+    clip = torch.mean(clips,dim=-2)
+    return clip, None
+
 class Instance3D:
     """
     3D instance class.
@@ -30,8 +39,9 @@ class Instance3D:
         n_top_kf (int): The number of top keyframes to keep. If 0 all keyframes are used.
         top_kf (list): A Heap of top keyframes ordered by their mask area.
     """
-    n_top_kf: int = 0
-    mv_fusion = l1_medoid
+    n_top_kf: int = 0 
+    mv_fusion = l1_medoid #cossim_medoid #avg_pooling #
+
     def __init__(self, id: int, kf_id: int | None = None, points_ids: List[int] = None, mask_area: int = 0):
         self.id = id
         self.clip_feature = None
