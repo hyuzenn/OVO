@@ -25,13 +25,13 @@ semantic:
   depth_filter: True
   log: True
   sam:
-    precomputed: False
+    precomputed: True
     multi_crop: True
-    points_per_side: 16
+    points_per_side: 32
     sam_ckpt_path: "data/input/sam_ckpts/"
     sam_version: "2.1"
     sam_encoder: "hiera_l"
-    masks_base_path: "data/working/masks/replica_384_sam2.1"
+    masks_base_path: "data/working/masks/replica_384_sam2.1_32"
     #sam_version: "" # "" is 1, 
     #sam_encoder: "vit_h"
     #masks_base_path: "data/working/masks/replica_384_h"
@@ -39,12 +39,12 @@ semantic:
     #stability_score_thresh: 0.95
     #min_mask_region_area: 100
   clip:
-    use_half: True
+    use_half: False
     embed_type: TextRegion # learned #fixed_weights # 
     model_card: "PE-Core-L14-336" # SigLIP-384 #ViT-H-14 #
     mask_res: 336 # 384
     weights_predictor_path: data/input/weights_predictor/base
-    k_top_views: 5 #10
-    mv_fuser: True #False
-    mv_fuser_ckpt: "20250725_1200"
+    k_top_views: -1 #5 #10
+    mv_fuser: False #True #
+    mv_fuser_ckpt: "20250725_1155" #"20250725_1200"
   kf_queue_delay: 10
