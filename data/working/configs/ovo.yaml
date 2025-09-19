@@ -16,6 +16,8 @@ vis:
   show_stream: False # this is going to be ignored if stream is false
 mapping:
   map_every: 5 # ignored if slam.slam_module == orbslam2
+debug: True
+debug_info: True
 semantic:
   segment_every: 10
   use_gt_masks: False
@@ -44,7 +46,8 @@ semantic:
     model_card: "PE-Core-L14-336" # SigLIP-384 #ViT-H-14 #
     mask_res: 336 # 384
     weights_predictor_path: data/input/weights_predictor/base
-    k_top_views: -1 #5 #10
+    k_top_views: 2000 #-1 #5 #10
+    fusion: 'avg_pooling' #'l1_medoid'
     mv_fuser: False #True #
     mv_fuser_ckpt: "20250725_1155" #"20250725_1200"
   kf_queue_delay: 10
