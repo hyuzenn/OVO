@@ -5,7 +5,7 @@ import pprint
 import torch
 import time
 
-from ..utils import geometry_utils, instance_utils, clip_utils
+from ..utils import geometry_utils, instance_utils
 from .clip_generator import CLIPGenerator
 from .mask_generator import MaskGenerator
 from .instance3d import Instance3D
@@ -33,13 +33,10 @@ class OVO:
         self.device = device
         self.n_top_views = config["clip"].get("k_top_views", 0)
         Instance3D.n_top_kf = self.n_top_views
-        if config["clip"].get("mv_fuser",False):
-            mv_fuser = clip_utils.tmp_get_mv_fuser(config["clip"]["mv_fuser_ckpt"])
-            def mv_fusion(self, clips):
-                with torch.inference_mode():
-                    clip = torch.nn.functional.normalize(mv_fuser(clips.cuda()), p=2, dim=-1).squeeze().cpu()
-                return clip, -1  
-            Instance3D.mv_fusion = mv_fusion
+        mv_fusion = config["clip"].get("fusion","l1_medoid")
+        ckpt = config["clip"].get("mv_fuser_ckpt")
+            
+        Instance3D.set_fusion(mv_fusion, ckpt)
         
         # For backward compatibility
         if "mask_res" in config["sam"] and "mask_res" not in config["clip"]:

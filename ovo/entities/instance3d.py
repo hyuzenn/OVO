@@ -3,20 +3,27 @@ from typing import Any, Dict, List
 import numpy as np
 import torch
 import heapq
+from functools import partial
+from ..utils import clip_utils
 
-def l1_medoid(self, clips):
+def l1_medoid(cls, clips):
     l1_distances = torch.abs(clips-clips.permute(1,0,2)).sum((1,2))
     kf = l1_distances.argmin()
     return clips[:,kf], kf
 
-def cossim_medoid(self, clips):
+def cossim_medoid(cls, clips):
     cossim_distances = torch.cosine_similarity(clips,clips.permute(1,0,2), dim=-1).sum(-1)
-    kf = cossim_distances.argmin()
+    kf = cossim_distances.argmax()
     return clips[:,kf], kf
 
-def avg_pooling(self, clips):
+def avg_pooling(cls, clips):
     clip = torch.mean(clips,dim=-2)
     return clip, None
+
+def mv_fusion(clips, mv_fuser = None):
+    with torch.inference_mode():
+        clip = torch.nn.functional.normalize(mv_fuser(clips.cuda()), p=2, dim=-1).squeeze().cpu()
+    return clip, None 
 
 class Instance3D:
     """
@@ -40,7 +47,7 @@ class Instance3D:
         top_kf (list): A Heap of top keyframes ordered by their mask area.
     """
     n_top_kf: int = 0 
-    mv_fusion = l1_medoid #cossim_medoid #avg_pooling #
+    mv_fusion = l1_medoid
 
     def __init__(self, id: int, kf_id: int | None = None, points_ids: List[int] = None, mask_area: int = 0):
         self.id = id
@@ -51,7 +58,21 @@ class Instance3D:
         self.top_kf = []
         if kf_id is not None:
             self.update(points_ids, kf_id, mask_area)
-    
+
+    @staticmethod
+    def set_fusion(fusion, ckpt=None):
+        if fusion == "l1_medoid":
+            Instance3D.mv_fusion = l1_medoid
+        elif fusion == "cossim_medoid":
+            Instance3D.mv_fusion = cossim_medoid
+        elif fusion == "avg_pooling":
+            Instance3D.mv_fusion = avg_pooling
+        elif fusion == "mv_fusion":
+            mv_fuser = clip_utils.tmp_get_mv_fuser(ckpt)
+            Instance3D.mv_fusion = partial(mv_fusion, mv_fuser = mv_fuser)
+        else:
+            raise NotImplementedError()
+
     def update(self, points_ids: List[int], kf_id: int, area: int) -> None:
         """ Add repeated
         Args:
