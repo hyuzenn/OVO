@@ -7,7 +7,7 @@ data:
 seed: 0
 slam:
   config_path: data/working/configs/slam
-  slam_module: vanilla #gaussian_slam #orbslam2 #
+  slam_module: orbslam2 #vanilla #gaussian_slam #
   use_viewer: False # only used with orbslam2
   close_loops: True # only used with orbslam2
   save_estimated_cam: True
@@ -27,7 +27,7 @@ semantic:
   depth_filter: True
   log: True
   sam:
-    precomputed: True
+    precomputed: False
     multi_crop: True
     points_per_side: 16
     sam_ckpt_path: "data/input/sam_ckpts/"
@@ -46,7 +46,7 @@ semantic:
     model_card: "PE-Core-L14-336" # SigLIP-384 #ViT-H-14 #
     mask_res: 336 # 384
     weights_predictor_path: data/input/weights_predictor/base
-    k_top_views: 2000 #-1 #5 #10
+    k_top_views: 10000 #-1 #5 #10
     fusion: 'avg_pooling' #'l1_medoid'
     mv_fuser: False #True #
     mv_fuser_ckpt: "20250725_1155" #"20250725_1200"
