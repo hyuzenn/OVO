@@ -9,9 +9,6 @@
     <a href='https://tberriel.github.io/ovo/'><img src='https://img.shields.io/badge/Web-Page-green'></a> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
 </div>
 
-## Changelog:
-
-- 10, June, 2025 - Improved integration with ORB-SLAM2 and added loop closure support.
 
 ## Installation
 Following instruction are for an Ubuntu>=20.04 system, with installed Conda and CUDA support.
@@ -47,15 +44,14 @@ conda install faiss-gpu=1.8.0 cudnn -c pytorch -c conda-forge
 conda install cuda-toolkit=12.1 -c nvidia/label/cuda-12.1.0
 pip install git+https://github.com/VladimirYugay/simple-knn.git@c7e51a06a4cd84c25e769fee29ab391fe5d5ff8d git+https://github.com/VladimirYugay/gaussian_rasterizer.git@9c40173fcc8d9b16778a1a8040295bc2f9
 ```
-### ORB-SLAM2 (Optional)
+### ORB-SLAM3 (Optional)
 Clone the repository:
 ```
 cd thirdParty/
-git clone https://github.com/tberriel/ORB_SLAM2
-cd ORB_SLAM2
-git checkout ovo-mapping
+git clone https://github.com/tberriel/ORB_SLAM3
+cd ORB_SLAM3
 ```
-Manually install ORB-SLAM2 dependencies into the conda environment:
+Manually install ORB-SLAM3 dependencies into the conda environment:
 ```
 conda activate ovo
 # Instal conda C compilers to avoid relying on system defaults
@@ -65,7 +61,7 @@ conda install libegl libegl-devel libgl libgl-devel libgles libgles-devel libglv
 # Install Eigen, Pangolin, OpenCV, Numpy
 conda install glew eigen=3.4 pangolin-opengl=0.9.2 libopencv=4.11 numpy=1.26.4 boost -c conda-forge 
 ```
-And finally run the script `build.sh` to build the *ORB-SLAM2* and the python bindings.
+And finally run the script `build.sh` to build the *ORB-SLAM3* and the python bindings.
 
 ## Data
 See <a href="./data/input/ReadMe.md">data instructions</a>.
@@ -93,16 +89,18 @@ OVO configuration can be modified in `data/working/configs/ovo.yaml`. To speedup
     ```
     python run_eval.py --dataset_name ScanNet --experiment_name ovo_mapping --run --segment --eval --scenes scene0011_00
     ```
-## TODO:
-- [ ] Upload Replica and ScanNet checkpoints
+
+## Changelog:
+- 7, October, 2025  - Switched from ORB-SLAM2 to ORB-SLAM3 to minimize segmentation fault errors. 
+- 10, June, 2025 - Improved integration with ORB-SLAM2 and added loop closure support.
 
 ## Citation
 If you found our work useful, please cite us.
 ```
     @article{martins2024ovo,
     title={Open-Vocabulary Online Semantic Mapping for SLAM},
-    author={Martins, Tomas Berriel and Oswald, Martin R and Civera, Javier},
-    journal={arXiv preprint arXiv:2411.15043},
-    year={2024}
+    author={Martins, Tomas Berriel and Oswald, Martin R. and Civera, Javier},
+    journal={IEEE Robotics and Automation Letters}, 
+    year={2025},
     }
 ```
