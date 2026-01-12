@@ -78,26 +78,5 @@ def load_clip_model(model_card: str, use_half: bool) -> Tuple[Any, Any, Compose,
 
     return model.eval(), tokenizer, preprocess, clip_dim_cards[model_card]
 
-def tmp_get_mv_fuser(ckpt_path: str):
-    import sys
-    import yaml
-    from pathlib import Path
-    clips_merging_dir="/home/tberriel/Workspaces/semsplat_ws/clips_merging"
-    sys.path.append(clips_merging_dir)
-    from clips_merging.models.mv_merger import MVMerger
-    ckpt_path = Path(f"{clips_merging_dir}/data/output/mv_merger/mv_fusion/{ckpt_path}")
-    with open(ckpt_path / "hparams.yaml") as f:
-        hparams = yaml.full_load(f)
-    model_ckpt = "model_best.ckpt"
-    weights_path = ckpt_path / "checkpoints" / model_ckpt
-
-    checkpoint = torch.load(weights_path)
-    model_weights = {}
-    for k, v in checkpoint["state_dict"].items():
-        if k[:6] == "model.":
-            model_weights[k[6:]] = v
-    model = MVMerger 
-    model = model(hparams["model"])
-    model.load_state_dict(model_weights, strict=False)
-    model.cuda()
-    return model.eval()
+def load_camfusion_model(ckpt_path: str):
+    raise NotImplementedError("CAMFusion loading function not implemented yet.")

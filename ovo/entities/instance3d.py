@@ -20,7 +20,7 @@ def avg_pooling(cls, clips):
     clip = torch.mean(clips,dim=-2)
     return clip, None
 
-def mv_fusion(clips, mv_fuser = None):
+def camfusion(clips, mv_fuser = None):
     with torch.inference_mode():
         clip = torch.nn.functional.normalize(mv_fuser(clips.cuda()), p=2, dim=-1).squeeze().cpu()
     return clip, None 
@@ -68,9 +68,9 @@ class Instance3D:
             Instance3D.mv_fusion = cossim_medoid
         elif fusion == "avg_pooling":
             Instance3D.mv_fusion = avg_pooling
-        elif fusion == "mv_fusion":
-            mv_fuser = clip_utils.tmp_get_mv_fuser(ckpt)
-            Instance3D.mv_fusion = partial(mv_fusion, mv_fuser = mv_fuser)
+        elif fusion == "camfusion":
+            mv_fuser = clip_utils.load_camfusion_model(ckpt)
+            Instance3D.mv_fusion = partial(camfusion, mv_fuser = mv_fuser)
         else:
             raise NotImplementedError()
 
