@@ -20,9 +20,9 @@ def get_slam_backbone(config: Dict[str, Any], dataset, cam_intrinsics: torch.Ten
     if backbone == "gaussian_slam":
         from ..slam.gaussian_slam import WrapperGaussianSLAM
         return WrapperGaussianSLAM(config, dataset)
-    elif backbone ==  "orbslam2":
-        from ..slam.orbslam2 import WrapperORBSLAM2
-        return WrapperORBSLAM2(config, cam_intrinsics, world_ref=torch.from_numpy(dataset[0][3]))
+    elif backbone.startswith("orbslam"):
+        from ..slam.orbslam import WrapperORBSLAM
+        return WrapperORBSLAM(config, cam_intrinsics, world_ref=torch.from_numpy(dataset[0][3]))
     else:
         return VanillaMapper(config, cam_intrinsics)
 

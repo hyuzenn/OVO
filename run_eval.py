@@ -75,7 +75,7 @@ def run_scene(scene: str, dataset: str, experiment_name: str, tmp_run: bool = Fa
 
     config = io_utils.load_config("data/working/configs/ovo.yaml")
     map_module = config["slam"]["slam_module"]
-    if map_module == "orbslam2":
+    if map_module.startswith("orbslam"):
         map_module = "vanilla"
         
     config_slam = io_utils.load_config(os.path.join(config["slam"]["config_path"],  map_module, dataset.lower()+".yaml"))

@@ -14,8 +14,8 @@ def convert_pose(traj, device):
     return pose
 
 
-class WrapperORBSLAM2(VanillaMapper):
-    """This class uses ORB-SLAM 2 to estimate camera posses and generates a vanilla point-cloud reconstruction by unprojecting depths"""
+class WrapperORBSLAM(VanillaMapper):
+    """This class uses ORB-SLAM 3 to estimate camera posses and generates a vanilla point-cloud reconstruction by unprojecting depths"""
     def __init__(self, config: Dict[str, Any], cam_intrinsics: torch.Tensor, world_ref=torch.eye(4)) -> None:
         super().__init__(config, cam_intrinsics)
 
@@ -27,6 +27,7 @@ class WrapperORBSLAM2(VanillaMapper):
 
         configs_path = Path(config["slam"]["config_path"]) / "orbslam3"
         vocab_path = configs_path  / "vocabulary" / "ORBvoc.txt"
+        assert (vocab_path).exists(), f"ORB vocabulary not found, review path {vocab_path}"
         if (configs_path/ config["dataset_name"].lower()/ f"{config['data']['scene_name']}.yaml").exists():
             orbslam_config_path = configs_path / config["dataset_name"].lower()/ f"{config['data']['scene_name']}.yaml"
         else:
