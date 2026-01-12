@@ -16,15 +16,15 @@ from ovo.utils import io_utils, gen_utils, eval_utils
 from ovo.entities.ovomapping import OVOSemMap
 from ovo.entities.ovo import OVO
 
-def load_representation(scene_path: Path, eval: bool=False) -> OVO:
+def load_representation(scene_path: Path, eval: bool=False, debug_info: bool=False) -> OVO:
     config = io_utils.load_config(scene_path / "config.yaml", inherit=False)
     submap_ckpt = torch.load(scene_path /"ovo_map.ckpt" )
     map_params = submap_ckpt.get("map_params", None)
     if map_params is None:
         map_params = submap_ckpt["gaussian_params"]        
-        
+    config["semantic"]["verbose"] = False 
     ovo = OVO(config["semantic"],None, config["data"]["scene_name"], eval=eval, device=config.get("device", "cuda"))
-    ovo.restore_dict(submap_ckpt["ovo_map_params"])
+    ovo.restore_dict(submap_ckpt["ovo_map_params"], debug_info=debug_info)
     return ovo, map_params
 
 
@@ -52,16 +52,6 @@ def compute_scene_labels(scene_path: Path, dataset_name: str, scene_name: str, d
     map_id_to_idx = {id: i for i, id in enumerate(ovo.objects.keys())}
     mesh_semantic_labels = instances_info["classes"][np.vectorize(map_id_to_idx.get)(mesh_instance_labels)]
     instances_info["masks"] = mesh_instances_masks.int().numpy()
-
-    """
-    import open3d as o3d
-    import numpy as np
-    gt_pcd = o3d.geometry.PointCloud()
-    gt_pcd.points = o3d.utility.Vector3dVector(pcd_gt)
-    pred_pcd = o3d.geometry.PointCloud()
-    pred_pcd.points = o3d.utility.Vector3dVector(pcd_pred)
-    o3d.visualization.draw_geometries_with_key_callbacks([gt_pcd, pred_pcd], {})
-    """ 
 
     print(f"Writing prediction to {pred_path}!")
     io_utils.write_labels(pred_path, mesh_semantic_labels)
