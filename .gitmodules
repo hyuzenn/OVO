@@ -1,3 +1,6 @@
 [submodule "thirdParty/segment-anything-2"]
 	path = thirdParty/segment-anything-2
 	url = https://github.com/facebookresearch/sam2.git
+[submodule "thirdParty/perception_models"]
+	path = thirdParty/perception_models
+	url = https://github.com/facebookresearch/perception_models

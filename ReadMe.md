@@ -21,16 +21,21 @@ Clone repository with recursive flag:
 And set up the conda environment:
 ```
 # conda env
-conda create -n ovo python=3.10.13
+conda create -n ovo python=3.11
 conda activate ovo
 
-conda install pyyaml tqdm psutil wandb plyfile numpy=1.26.4 matplotlib seaborn opencv=4.11 imageio scipy scikit-learn pandas -c conda-forge
+conda install pyyaml tqdm psutil wandb plyfile numpy=2.4 matplotlib seaborn opencv=4.11 imageio scipy scikit-learn pandas -c conda-forge
 # torch
-pip install torch==2.5.1 torchvision==0.20.1 transformers==4.51.0 open_clip_torch==2.32.0 open3d==0.19.0 huggingface-hub==0.30.1
+pip install torch==2.5.1 torchvision==0.20.1 transformers==4.51.0 open_clip_torch==2.32.0 open3d==0.19.0 huggingface-hub==0.30.1 einops==0
+8.1
 
 #sam2
 cd /<ovo_path>/thirdParty/segment-anything-2
 pip install -e .
+
+# Perception Encoder
+cd /<ovo_path>/thirdParty/perception_models
+pip install -e . --no-dependencies
 ```
 By default we use Segment Anything 2, but OVO is also compatible with SAM 1. If you want, you can install it following the <a href="https://github.com/facebookresearch/segment-anything">official instructions</a>.
 
@@ -54,12 +59,12 @@ cd ORB_SLAM3
 Manually install ORB-SLAM3 dependencies into the conda environment:
 ```
 conda activate ovo
-# Instal conda C compilers to avoid relying on system defaults
-conda install cxx-compiler -c conda-forge # generic version hardware agnostic
+# Instal conda C compilers to avoid relying on system defaults. These are generic version hardware agnostic.
+conda install cxx-compiler -c conda-forge
 # Install OpenGL
 conda install libegl libegl-devel libgl libgl-devel libgles libgles-devel libglvnd libglvnd-devel libglx libglx-devel libopengl libopengl-devel -c conda-forge
 # Install Eigen, Pangolin, OpenCV, Numpy
-conda install glew eigen=3.4 pangolin-opengl=0.9.2 libopencv=4.11 numpy=1.26.4 boost -c conda-forge 
+conda install glew eigen=3.4 pangolin-opengl=0.9.2 libopencv=4.11 numpy=2.4 boost -c conda-forge 
 ```
 And finally run the script `build.sh` to build the *ORB-SLAM3* and the python bindings.
 
@@ -91,9 +96,10 @@ OVO configuration can be modified in `data/working/configs/ovo.yaml`. To speedup
     ```
 
 ## Changelog:
+- 13, January, 2026 - Added implementation using [TextRegion](https://github.com/avaxiao/TextRegion) with the [Perception Encoder](https://github.com/facebookresearch/perception_models) as descriptor. Performance in Replica goes up to 35.7% IoU and 57% Acc (from from 27.0% IoU and 39.1% Acc reported in the paper). 
+- 11, January, 2026 - Update conda environment to work with Python 3.11 and Numpy 2.4.
 - 7, October, 2025  - Switched from ORB-SLAM2 to ORB-SLAM3 to minimize segmentation fault errors. 
 - 10, June, 2025 - Improved integration with ORB-SLAM2 and added loop closure support.
-
 ## Citation
 If you found our work useful, please cite us.
 ```
