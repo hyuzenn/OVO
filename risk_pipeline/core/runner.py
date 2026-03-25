@@ -110,21 +110,28 @@ class RiskPipelineRunner:
     ) -> dict:
         # 2) z_i
         z_i, node_order = self.base_builder(scene_graph)
+        print(f"[runner] z_i shape: {tuple(z_i.shape)}")
 
         # 3) r_i_rel
         r_i_rel = self.graph_encoder(scene_graph)
+        print(f"[runner] r_i_rel shape: {tuple(r_i_rel.shape)}")
 
         # 4) r_i_retr
         r_i_retr = self.retriever(z_i, memory)
+        print(f"[runner] r_i_retr shape: {tuple(r_i_retr.shape)}")
 
         # 5) z_i'
         z_i_prime = self.modulation(z_i=z_i, r_i_rel=r_i_rel, r_i_retr=r_i_retr)
+        print(f"[runner] z_i' shape: {tuple(z_i_prime.shape)}")
 
         # 6) mapping integrate
         positions = torch.tensor(
             [scene_graph.objects[node_id].center for node_id in node_order],
             dtype=torch.float32,
         )
+        print(f"[runner] mapper input bbox shape: {tuple(positions.shape)}")
+        if positions.numel() == 0:
+            raise ValueError("Selected scan has 0 valid boxes after parsing")
         if T_t is None:
             T_t = np.eye(4, dtype=np.float64)
         integrated_voxels = self.mapper.integrate(

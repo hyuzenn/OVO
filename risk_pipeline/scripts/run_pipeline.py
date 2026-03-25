@@ -30,6 +30,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run standalone risk pipeline MVP end-to-end")
     parser.add_argument("--relationships-json", required=True)
     parser.add_argument("--obj-boxes-json", required=True)
+    parser.add_argument("--scan-id")
     parser.add_argument("--memory-json", required=True)
     parser.add_argument("--hidden-dim", type=int, default=32)
     parser.add_argument("--top-k", type=int, default=3)
@@ -38,7 +39,13 @@ def main() -> None:
     args = parser.parse_args()
 
     loader = SGFrontLoader()
-    scene = loader.load(args.relationships_json, args.obj_boxes_json)
+    scene = loader.load(args.relationships_json, args.obj_boxes_json, scan_id=args.scan_id)
+    if loader.last_scene_stats:
+        stats = loader.last_scene_stats
+        print(f"[run_pipeline] selected scan id: {stats['selected_scan_id']}")
+        print(f"[run_pipeline] num objects: {stats['num_objects']}")
+        print(f"[run_pipeline] num relationships: {stats['num_relationships']}")
+        print(f"[run_pipeline] num valid boxes: {stats['num_valid_boxes']}")
     memory = FailurePrototypeMemory.from_json(args.memory_json)
 
     cfg = PipelineConfig(
