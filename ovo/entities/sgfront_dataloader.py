@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import torch
 
@@ -34,6 +36,30 @@ def _to_int(value) -> int:
         if digits:
             return int(digits)
     return int(value)
+
+
+def _normalize_id(value: Any) -> int | str:
+    """Normalize mixed int/str ids.
+
+    Policy:
+    - int-like values are converted to int
+    - otherwise keep a trimmed string representation
+    """
+
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _stable_seed(text: str, base_seed: int = 17) -> int:
@@ -269,3 +295,179 @@ class SGFrontDataLoader:
             return vec[:dim]
         pad = torch.zeros(dim - vec.numel(), dtype=vec.dtype)
         return torch.cat([vec, pad], dim=0)
+
+
+@dataclass(slots=True)
+class SGObject:
+    object_id: int | str
+    class_name: str
+    bbox: Tuple[float, float, float, float, float, float]  # cx, cy, cz, sx, sy, sz
+
+
+@dataclass(slots=True)
+class SGRelation:
+    subject_id: int | str
+    object_id: int | str
+    relation_id: int | str | None
+    relation_name: str
+
+
+@dataclass(slots=True)
+class SceneGraph:
+    scan_id: str
+    objects: Dict[int | str, SGObject] = field(default_factory=dict)
+    relationships: List[SGRelation] = field(default_factory=list)
+
+
+class SGFrontLoader:
+    """Scan-aware SG-FRONT loader that converts raw JSON into SceneGraph."""
+
+    _DEFAULT_SCAN_ID = "__default__"
+    _DEFAULT_BBOX = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+
+    def __init__(self, relationships_path: str | Path, obj_boxes_path: str | Path) -> None:
+        self.relationships_path = Path(relationships_path)
+        self.obj_boxes_path = Path(obj_boxes_path)
+        self._relationships_data = self._read_json(self.relationships_path)
+        self._obj_boxes_data = self._read_json(self.obj_boxes_path)
+        self._scan_to_rel = self._index_relationship_scans(self._relationships_data)
+        self._scan_to_boxes = self._index_obj_box_scans(self._obj_boxes_data)
+        self._scan_ids = sorted(set(self._scan_to_rel) | set(self._scan_to_boxes))
+
+    def list_scan_ids(self) -> list[str]:
+        return list(self._scan_ids)
+
+    def infer_scan_id(self, index: int = 0) -> str:
+        if not self._scan_ids:
+            raise ValueError("No scan_id available in relationships/obj_boxes JSON.")
+        if index < 0 or index >= len(self._scan_ids):
+            raise IndexError(f"scan index out of range: {index} (num_scans={len(self._scan_ids)})")
+        return self._scan_ids[index]
+
+    def load_scan(self, scan_id: str) -> SceneGraph:
+        if scan_id not in self._scan_ids:
+            raise KeyError(f"scan_id '{scan_id}' not found. available={self._scan_ids}")
+
+        rel_scan = self._scan_to_rel.get(scan_id, {})
+        box_scan = self._scan_to_boxes.get(scan_id, {})
+
+        objects_raw = rel_scan.get("objects", {})
+        if not isinstance(objects_raw, dict):
+            warnings.warn(f"[SGFrontLoader] scan '{scan_id}': invalid objects payload; using empty dict.")
+            objects_raw = {}
+
+        boxes = self._parse_box_map(scan_id, box_scan)
+        objects = self._parse_objects(scan_id, objects_raw, boxes)
+        relationships = self._parse_relationships(scan_id, rel_scan.get("relationships", []), objects)
+        return SceneGraph(scan_id=scan_id, objects=objects, relationships=relationships)
+
+    @staticmethod
+    def _read_json(path: Path) -> dict:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _index_relationship_scans(self, rel_data: dict) -> Dict[str, dict]:
+        # Canonical SG-FRONT format: {"scans": [{"scan": "...", "objects": ..., "relationships": ...}, ...]}
+        scans = rel_data.get("scans")
+        if isinstance(scans, list):
+            out: Dict[str, dict] = {}
+            for scan_item in scans:
+                if not isinstance(scan_item, dict):
+                    continue
+                raw_scan_id = scan_item.get("scan") or scan_item.get("scan_id")
+                if raw_scan_id is None:
+                    warnings.warn("[SGFrontLoader] Encountered scan entry without scan id; skipped.")
+                    continue
+                scan_id = str(raw_scan_id)
+                out[scan_id] = scan_item
+            return out
+
+        # Backward compatibility: single-scene format with top-level objects/relationships.
+        if "objects" in rel_data or "relationships" in rel_data:
+            warnings.warn(
+                "[SGFrontLoader] relationships JSON has no 'scans'; treating as single-scene data."
+            )
+            return {self._DEFAULT_SCAN_ID: rel_data}
+
+        return {}
+
+    def _index_obj_box_scans(self, box_data: dict) -> Dict[str, dict]:
+        # Expected: {"scan_id_a": {...}, "scan_id_b": {...}} OR single-scene {"1": {...}, ...}
+        if not box_data:
+            return {}
+
+        first_val = next(iter(box_data.values()))
+        if isinstance(first_val, dict) and ("param7" in first_val or "8points" in first_val or "8_points" in first_val):
+            warnings.warn("[SGFrontLoader] obj_boxes JSON appears single-scene; mapped to default scan id.")
+            return {self._DEFAULT_SCAN_ID: box_data}
+
+        out: Dict[str, dict] = {}
+        for raw_scan_id, payload in box_data.items():
+            if isinstance(payload, dict):
+                out[str(raw_scan_id)] = payload
+        return out
+
+    def _parse_box_map(self, scan_id: str, box_scan_data: dict) -> Dict[int | str, Tuple[float, float, float, float, float, float]]:
+        out: Dict[int | str, Tuple[float, float, float, float, float, float]] = {}
+        for raw_obj_id, payload in box_scan_data.items():
+            if not isinstance(payload, dict):
+                warnings.warn(f"[SGFrontLoader] scan '{scan_id}': invalid box payload for id={raw_obj_id}; skipped.")
+                continue
+            obj_id = _normalize_id(raw_obj_id)
+            param7 = payload.get("param7")
+            if isinstance(param7, Sequence) and len(param7) >= 6:
+                cx, cy, cz = float(param7[0]), float(param7[1]), float(param7[2])
+                sx, sy, sz = abs(float(param7[3])), abs(float(param7[4])), abs(float(param7[5]))
+                out[obj_id] = (cx, cy, cz, sx, sy, sz)
+            else:
+                warnings.warn(
+                    f"[SGFrontLoader] scan '{scan_id}': missing/invalid param7 for object {obj_id}; using default bbox."
+                )
+                out[obj_id] = self._DEFAULT_BBOX
+        return out
+
+    def _parse_objects(
+        self,
+        scan_id: str,
+        objects_raw: dict,
+        boxes: Dict[int | str, Tuple[float, float, float, float, float, float]],
+    ) -> Dict[int | str, SGObject]:
+        objects: Dict[int | str, SGObject] = {}
+        for raw_obj_id, class_name in objects_raw.items():
+            obj_id = _normalize_id(raw_obj_id)
+            bbox = boxes.get(obj_id, self._DEFAULT_BBOX)
+            if obj_id not in boxes:
+                warnings.warn(
+                    f"[SGFrontLoader] scan '{scan_id}': bbox missing for object {obj_id}; using default bbox."
+                )
+            objects[obj_id] = SGObject(object_id=obj_id, class_name=str(class_name), bbox=bbox)
+        return objects
+
+    def _parse_relationships(
+        self,
+        scan_id: str,
+        relationships_raw: Any,
+        objects: Dict[int | str, SGObject],
+    ) -> List[SGRelation]:
+        if not isinstance(relationships_raw, list):
+            warnings.warn(f"[SGFrontLoader] scan '{scan_id}': invalid relationships payload; using empty list.")
+            return []
+
+        relations: List[SGRelation] = []
+        for idx, item in enumerate(relationships_raw):
+            if not isinstance(item, Sequence) or len(item) < 4:
+                warnings.warn(f"[SGFrontLoader] scan '{scan_id}': malformed relationship at index {idx}; skipped.")
+                continue
+            subj_id = _normalize_id(item[0])
+            obj_id = _normalize_id(item[1])
+            rel_id = _normalize_id(item[2]) if item[2] is not None else None
+            rel_name = str(item[3])
+            if subj_id not in objects or obj_id not in objects:
+                warnings.warn(
+                    f"[SGFrontLoader] scan '{scan_id}': relationship {item} references missing object(s); skipped."
+                )
+                continue
+            relations.append(
+                SGRelation(subject_id=subj_id, object_id=obj_id, relation_id=rel_id, relation_name=rel_name)
+            )
+        return relations
