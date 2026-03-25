@@ -12,6 +12,7 @@ from .logger import Logger
 from .ovo import OVO
 from .datasets import get_dataset
 from .visualizer import stream_pcd
+from .risk_aware_mapper import RiskAwareMapper, RiskAwareMapperConfig
 from ..slam.vanilla_mapper import VanillaMapper
 from ..utils import io_utils
 
@@ -62,6 +63,11 @@ class OVOSemMap():
         if config["semantic"]["sam"].get("precomputed", False) or config["semantic"]["sam"].get("precompute", False):
             self.ovo.mask_generator.precompute(self.dataset, self.segment_every)
         self.slam_backbone = get_slam_backbone(config, self.dataset, cam_intrinsics)
+        self.risk_mapper = None
+        self.risk_batch = None
+        self.risk_graph = None
+        self.risk_summary = []
+        self._setup_risk_mapper(config)
 
 
         self.first_frame = 0
@@ -77,6 +83,60 @@ class OVOSemMap():
         """
         self.output_path = Path(output_path)
         self.output_path.mkdir(exist_ok=True, parents=True)
+
+    def _setup_risk_mapper(self, config: Dict[str, Any]) -> None:
+        risk_cfg = config.get("risk_aware", {})
+        if not risk_cfg.get("enabled", False):
+            return
+
+        relationships_json = risk_cfg.get("relationships_json")
+        obj_boxes_json = risk_cfg.get("obj_boxes_json")
+        if relationships_json is None or obj_boxes_json is None:
+            print("[RiskAware] Skipping integration: missing `relationships_json` or `obj_boxes_json`.")
+            return
+
+        mapper_cfg = RiskAwareMapperConfig(
+            embedding_dim=risk_cfg.get("embedding_dim", 32),
+            geom_dim=risk_cfg.get("geom_dim", 8),
+            num_edge_types=risk_cfg.get("num_edge_types", 16),
+            retrieval_k=risk_cfg.get("retrieval_k", 3),
+            message_passing_steps=risk_cfg.get("message_passing_steps", 2),
+            lambda_1=risk_cfg.get("lambda_1", 0.5),
+            lambda_2=risk_cfg.get("lambda_2", 0.5),
+            device=config.get("device", "cpu"),
+            failure_memory_json=risk_cfg.get("failure_memory_json"),
+        )
+
+        self.risk_mapper = RiskAwareMapper(mapper_cfg)
+        _, self.risk_graph = self.risk_mapper.loader.load(relationships_json, obj_boxes_json)
+        self.risk_batch = self.risk_mapper.loader.to_tensor_batch(self.risk_graph)
+        print(
+            f"[RiskAware] Enabled. Loaded graph from '{relationships_json}' and '{obj_boxes_json}' "
+            f"with {self.risk_batch.z_i.shape[1]} nodes."
+        )
+
+    def _run_risk_step(self, frame_id: int, estimated_c2w: torch.Tensor) -> None:
+        if self.risk_mapper is None or self.risk_batch is None:
+            return
+        pose_t = estimated_c2w.detach().to(self.risk_batch.z_i.device, dtype=torch.float32)
+        if pose_t.dim() == 2:
+            pose_t = pose_t.unsqueeze(0)
+        self.risk_batch.pose_t = pose_t
+        outputs = self.risk_mapper.forward_batch(self.risk_batch)
+        self.risk_mapper._write_back_to_graph(self.risk_graph, outputs)
+        p_f = outputs["p_f"][0, :, 0].detach().cpu()
+        self.risk_summary.append(
+            {
+                "frame_id": int(frame_id),
+                "mean_p_f": float(p_f.mean().item()),
+                "max_p_f": float(p_f.max().item()),
+            }
+        )
+
+    def _save_risk_summary(self) -> None:
+        if self.risk_mapper is None or not self.risk_summary:
+            return
+        io_utils.save_dict_to_yaml({"risk_summary": self.risk_summary}, "risk_summary.yaml", directory=self.output_path)
 
     def save_representation(self) -> None:
         """ Saves the current map and scene objects parameters to a checkpoint file.
@@ -183,6 +243,7 @@ class OVOSemMap():
                                 self.slam_backbone.update_pcd_obj_ids(updated_points_ins_ids)
 
                             self.ovo.compute_semantic_info()
+                            self._run_risk_step(frame_id, estimated_c2w)
                             self.logger.log_memory_usage(frame_id)
 
                         t_sem = time.time()-t_sem_i
@@ -234,6 +295,7 @@ class OVOSemMap():
         self.logger.print_final_stats()
 
         self.save_representation()
+        self._save_risk_summary()
 
         self.ovo.cpu()
         del self.slam_backbone, self.ovo
