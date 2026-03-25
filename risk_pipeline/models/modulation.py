@@ -41,7 +41,20 @@ class GatedResidualModulation(nn.Module):
 
         nn.init.constant_(self.gate_mlp[-1].bias, init_gate_bias)
 
-    def forward(self, z_i: torch.Tensor, r_i_rel: torch.Tensor, r_i_retr: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def _summary_stats(values: torch.Tensor) -> dict[str, float]:
+        if values.numel() == 0:
+            return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0}
+        return {
+            "mean": float(values.mean().item()),
+            "std": float(values.std(unbiased=False).item()),
+            "min": float(values.min().item()),
+            "max": float(values.max().item()),
+        }
+
+    def modulate_with_stats(
+        self, z_i: torch.Tensor, r_i_rel: torch.Tensor, r_i_retr: torch.Tensor
+    ) -> tuple[torch.Tensor, dict[str, dict[str, float]]]:
         if z_i.shape != r_i_rel.shape or z_i.shape != r_i_retr.shape:
             raise ValueError(
                 f"Input shape mismatch: z_i={tuple(z_i.shape)}, r_i_rel={tuple(r_i_rel.shape)}, r_i_retr={tuple(r_i_retr.shape)}"
@@ -52,4 +65,17 @@ class GatedResidualModulation(nn.Module):
 
         gate = torch.sigmoid(self.gate_mlp(gate_input))
         delta = self.delta_mlp(delta_input)
-        return z_i + gate * delta
+        modulation_delta = gate * delta
+        z_i_prime = z_i + modulation_delta
+
+        cosine = torch.nn.functional.cosine_similarity(z_i, z_i_prime, dim=-1)
+        stats = {
+            "gate": self._summary_stats(gate),
+            "delta_l2": self._summary_stats(torch.linalg.norm(modulation_delta, dim=-1)),
+            "cosine_z_z_prime": self._summary_stats(cosine),
+        }
+        return z_i_prime, stats
+
+    def forward(self, z_i: torch.Tensor, r_i_rel: torch.Tensor, r_i_retr: torch.Tensor) -> torch.Tensor:
+        z_i_prime, _ = self.modulate_with_stats(z_i, r_i_rel, r_i_retr)
+        return z_i_prime

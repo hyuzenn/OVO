@@ -25,14 +25,32 @@ class FailureRetriever(nn.Module):
         self.top_k = top_k
         self.temperature = temperature
 
-    def forward(self, z_i: torch.Tensor, memory: FailurePrototypeMemory) -> torch.Tensor:
+    @staticmethod
+    def _summary_stats(values: torch.Tensor) -> dict[str, float]:
+        if values.numel() == 0:
+            return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0}
+        return {
+            "mean": float(values.mean().item()),
+            "std": float(values.std(unbiased=False).item()),
+            "min": float(values.min().item()),
+            "max": float(values.max().item()),
+        }
+
+    def retrieve_with_stats(
+        self, z_i: torch.Tensor, memory: FailurePrototypeMemory
+    ) -> tuple[torch.Tensor, dict[str, object]]:
         if z_i.ndim != 2:
             raise ValueError(f"z_i must be [N, D], got {tuple(z_i.shape)}")
 
         _, dim = z_i.shape
         prototypes = memory.as_tensor(device=z_i.device)
         if len(memory) == 0:
-            return torch.zeros_like(z_i)
+            empty_stats: dict[str, object] = {
+                "selected_prototype_indices": [],
+                "similarity_summary": self._summary_stats(torch.zeros(0, device=z_i.device)),
+                "top_k": 0,
+            }
+            return torch.zeros_like(z_i), empty_stats
         if prototypes.shape[1] != dim:
             raise ValueError(f"Prototype dim mismatch: z_i has D={dim}, memory has D={prototypes.shape[1]}")
 
@@ -46,4 +64,13 @@ class FailureRetriever(nn.Module):
 
         gathered = p_norm[top_indices]  # [N, K, D]
         r_i_retr = (weights.unsqueeze(-1) * gathered).sum(dim=1)  # [N, D]
+        stats = {
+            "selected_prototype_indices": top_indices.detach().cpu().tolist(),
+            "similarity_summary": self._summary_stats(top_values),
+            "top_k": int(k),
+        }
+        return r_i_retr, stats
+
+    def forward(self, z_i: torch.Tensor, memory: FailurePrototypeMemory) -> torch.Tensor:
+        r_i_retr, _ = self.retrieve_with_stats(z_i, memory)
         return r_i_retr

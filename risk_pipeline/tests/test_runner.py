@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from risk_pipeline.core.runner import PipelineConfig, RiskPipelineRunner
 from risk_pipeline.data.failure_memory import FailurePrototypeMemory
 from risk_pipeline.data.sgfront_loader import SGFrontLoader
+from risk_pipeline.models.failure_retrieval import FailureRetriever
 
 
 def _write_scene_files(tmp_path: Path) -> tuple[Path, Path]:
@@ -116,3 +118,32 @@ def test_loader_runner_mapper_bbox_smoke(tmp_path: Path) -> None:
 
     assert len(outputs["integrated_voxels"]) == len(outputs["node_order"])
     assert len(outputs["integrated_voxels"]) > 0
+
+
+def test_retrieval_output_can_change_with_top_k() -> None:
+    z_i = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)
+    memory = FailurePrototypeMemory.from_dict(
+        {
+            "prototypes": [
+                {"prototype_id": "p0", "embedding": [1.0, 0.0, 0.0], "metadata": {}},
+                {"prototype_id": "p1", "embedding": [0.8, 0.6, 0.0], "metadata": {}},
+                {"prototype_id": "p2", "embedding": [0.0, 1.0, 0.0], "metadata": {}},
+            ]
+        }
+    )
+
+    r_top1 = FailureRetriever(top_k=1, temperature=0.2)(z_i, memory)
+    r_top2 = FailureRetriever(top_k=2, temperature=0.2)(z_i, memory)
+
+    assert not torch.allclose(r_top1, r_top2)
+
+
+def test_runner_modulation_changes_node_representation(tmp_path: Path) -> None:
+    rel_path, box_path = _write_scene_files(tmp_path)
+    scene = SGFrontLoader().load(rel_path, box_path)
+
+    cfg = PipelineConfig(hidden_dim=8, retrieval_top_k=2, voxel_size=1.0)
+    runner = RiskPipelineRunner(config=cfg)
+    outputs = runner.run(scene_graph=scene, memory=_memory(dim=8), T_t=np.eye(4))
+
+    assert not torch.allclose(outputs["z_i"], outputs["z_i_prime"])
