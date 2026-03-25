@@ -61,7 +61,18 @@ def compute_scene_labels(scene_path: Path, dataset_name: str, scene_name: str, d
     del ovo
 
 
-def run_scene(scene: str, dataset: str, experiment_name: str, tmp_run: bool = False, depth_filter: bool = None) -> None:
+def run_scene(
+    scene: str,
+    dataset: str,
+    experiment_name: str,
+    tmp_run: bool = False,
+    depth_filter: bool = None,
+    risk_aware: bool = False,
+    relationships_json: str | None = None,
+    obj_boxes_json: str | None = None,
+    risk_lambda1: float = 0.5,
+    risk_lambda2: float = 0.5,
+) -> None:
 
     config = io_utils.load_config("data/working/configs/ovo.yaml")
     map_module = config["slam"]["slam_module"]
@@ -92,6 +103,14 @@ def run_scene(scene: str, dataset: str, experiment_name: str, tmp_run: bool = Fa
 
     if depth_filter is not None:
         config["semantic"]["depth_filter"] = depth_filter
+    if risk_aware:
+        config["risk_aware"] = {
+            "enabled": True,
+            "relationships_json": relationships_json,
+            "obj_boxes_json": obj_boxes_json,
+            "lambda_1": risk_lambda1,
+            "lambda_2": risk_lambda2,
+        }
 
     if os.getenv('DISABLE_WANDB') == 'true':
         config["use_wandb"] = False
@@ -147,7 +166,17 @@ def main(args):
         input_path = f"./data/input/Datasets/{args.dataset_name}/{scene}"
         if args.run:
             t0 = time.time()
-            run_scene(scene, args.dataset_name, experiment_name, tmp_run = tmp_run)
+            run_scene(
+                scene,
+                args.dataset_name,
+                experiment_name,
+                tmp_run=tmp_run,
+                risk_aware=args.risk_aware,
+                relationships_json=args.relationships_json,
+                obj_boxes_json=args.obj_boxes_json,
+                risk_lambda1=args.risk_lambda1,
+                risk_lambda2=args.risk_lambda2,
+            )
             t1 = time.time()
             print(f"Scene {scene} took: {t1-t0:.2f}")
         gc.collect()
@@ -178,5 +207,13 @@ if __name__ == "__main__":
     parser.add_argument('--segment', action='store_true', help="If set, use the reconstructed scene to segment the gt point-cloud, after running OVO.")
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--ignore_background', action='store_true',help="If set, does not use background ids from eval_info to compute metrics.")
+    parser.add_argument('--risk_aware', action='store_true', help="If set, run RiskAwareMapper in the same online loop using camera poses.")
+    parser.add_argument('--relationships_json', type=str, default=None, help="Path to SG-FRONT relationships_*.json")
+    parser.add_argument('--obj_boxes_json', type=str, default=None, help="Path to SG-FRONT obj_boxes_*.json")
+    parser.add_argument('--risk_lambda1', type=float, default=0.5, help="Risk-aware weight lambda_1")
+    parser.add_argument('--risk_lambda2', type=float, default=0.5, help="Risk-aware weight lambda_2")
     args = parser.parse_args()
+    if args.risk_aware:
+        if args.relationships_json is None or args.obj_boxes_json is None:
+            raise ValueError("--risk_aware requires both --relationships_json and --obj_boxes_json")
     main(args)
