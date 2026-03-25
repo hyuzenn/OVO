@@ -11,7 +11,7 @@ Note:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Tuple, TypedDict
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, TypedDict
 
 
 Vector = List[float]  # expected per-instance shape: [D]
@@ -27,9 +27,109 @@ class BBox3D:
     center: Point3D
     size: Point3D
     yaw: float
-    corners_8: Optional[List[Point3D]] = None
+    corners: Optional[List[Point3D]] = None
     volume: Optional[float] = None
-    aspect_ratio: Optional[float] = None
+    aspect: Optional[float] = None
+
+    @classmethod
+    def from_param7(
+        cls,
+        params: Sequence[float],
+        *,
+        corners: Optional[List[Point3D]] = None,
+    ) -> "BBox3D":
+        """Create ``BBox3D`` from [cx, cy, cz, sx, sy, sz, yaw]."""
+
+        if len(params) != 7:
+            raise ValueError(f"Expected 7 params, got {len(params)}")
+        cx, cy, cz, sx, sy, sz, yaw = (float(v) for v in params)
+        return cls(center=(cx, cy, cz), size=(sx, sy, sz), yaw=yaw, corners=corners)
+
+    def compute_volume_aspect(self) -> Tuple[float, float]:
+        """Compute and cache volume/aspect where aspect := max(size_xy)/min(size_xy)."""
+
+        sx, sy, sz = self.size
+        self.volume = float(sx * sy * sz)
+        denom = max(min(float(sx), float(sy)), 1e-8)
+        self.aspect = float(max(float(sx), float(sy)) / denom)
+        return self.volume, self.aspect
+
+    @property
+    def corners_8(self) -> Optional[List[Point3D]]:
+        """Backward-compatible alias for ``corners``."""
+
+        return self.corners
+
+    @corners_8.setter
+    def corners_8(self, value: Optional[List[Point3D]]) -> None:
+        self.corners = value
+
+    @property
+    def aspect_ratio(self) -> Optional[float]:
+        """Backward-compatible alias for ``aspect``."""
+
+        return self.aspect
+
+    @aspect_ratio.setter
+    def aspect_ratio(self, value: Optional[float]) -> None:
+        self.aspect = value
+
+
+@dataclass(slots=True)
+class ObjectNode:
+    """Simple scene-graph object node."""
+
+    node_id: NodeId
+    label: str
+    bbox: BBox3D
+    attrs: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RelationEdge:
+    """Directed relation edge."""
+
+    subject_id: NodeId
+    object_id: NodeId
+    relation_name: str
+    relation_id: Optional[int] = None
+
+
+@dataclass(slots=True)
+class SceneGraph:
+    """Minimal scene graph schema for object and relation storage."""
+
+    scan_id: str
+    room_type: Optional[str] = None
+    nodes: Dict[NodeId, ObjectNode] = field(default_factory=dict)
+    edges: List[RelationEdge] = field(default_factory=list)
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+    def summary(self) -> Dict[str, Any]:
+        """Return a compact summary dictionary for debugging and stats."""
+
+        labels = [n.label for n in self.nodes.values()]
+        unique_labels = sorted(set(labels))
+        return {
+            "scan_id": self.scan_id,
+            "room_type": self.room_type,
+            "num_nodes": len(self.nodes),
+            "num_edges": len(self.edges),
+            "labels": unique_labels,
+            "meta_keys": sorted(self.meta.keys()),
+        }
+
+
+@dataclass(slots=True)
+class FailurePrototype:
+    """Draft failure prototype schema for failure-memory bootstrapping."""
+
+    proto_id: str
+    scenario: str
+    semantic_proto: List[float]
+    geom_proto: List[float]
+    prior_risk: float
+    tags: List[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -105,8 +205,10 @@ class BBox3DDict(TypedDict, total=False):
     center: Point3D
     size: Point3D
     yaw: float
+    corners: List[Point3D]
     corners_8: List[Point3D]
     volume: float
+    aspect: float
     aspect_ratio: float
 
 
