@@ -55,22 +55,52 @@ def main() -> None:
     )
     runner = RiskPipelineRunner(config=cfg)
     outputs = runner.run(scene_graph=scene, memory=memory)
+    selected_scan_id = loader.last_scene_stats["selected_scan_id"] if loader.last_scene_stats else args.scan_id
 
     result = {
-        "num_objects": len(scene.objects),
-        "num_relations": len(scene.graph.relations),
-        "num_voxels": len(outputs["map_state"]["voxels"]),
-        "node_order": outputs["node_order"],
-        "integrated_voxels": outputs["integrated_voxels"],
-        "map_state": _serialize_map_state(outputs["map_state"]),
+        "run": {
+            "selected_scan_id": selected_scan_id,
+            "config": {
+                "top_k": int(args.top_k),
+                "hidden_dim": int(args.hidden_dim),
+                "voxel_size": float(args.voxel_size),
+            },
+        },
+        "summary": {
+            "num_objects": len(scene.objects),
+            "num_relations": len(scene.graph.relations),
+            "num_voxels": len(outputs["map_state"]["voxels"]),
+        },
+        "retrieval": {
+            "top_k": int(outputs["retrieval_stats"]["top_k"]),
+            "selected_prototype_indices": outputs["retrieval_stats"]["selected_prototype_indices"],
+            "similarity_scores_summary": outputs["retrieval_stats"]["similarity_summary"],
+        },
+        "modulation": {
+            "gate_statistics": outputs["modulation_stats"]["gate"],
+            "delta_statistics": {
+                "mean_l2": outputs["modulation_stats"]["delta_mean_l2"],
+                "l2_summary": outputs["modulation_stats"]["delta_l2"],
+                "cosine_mean": outputs["modulation_stats"]["cosine_mean"],
+                "cosine_summary": outputs["modulation_stats"]["cosine_z_z_prime"],
+            },
+        },
+        "artifacts": {
+            "node_order": outputs["node_order"],
+            "integrated_voxels": outputs["integrated_voxels"],
+            "map_state": _serialize_map_state(outputs["map_state"]),
+        },
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
-    print(f"[run_pipeline] objects={result['num_objects']} relations={result['num_relations']}")
-    print(f"[run_pipeline] voxels={result['num_voxels']}")
+    print(
+        "[run_pipeline] objects="
+        f"{result['summary']['num_objects']} relations={result['summary']['num_relations']}"
+    )
+    print(f"[run_pipeline] voxels={result['summary']['num_voxels']}")
     print(f"[run_pipeline] wrote {args.output}")
 
 
