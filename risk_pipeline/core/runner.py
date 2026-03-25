@@ -117,12 +117,24 @@ class RiskPipelineRunner:
         print(f"[runner] r_i_rel shape: {tuple(r_i_rel.shape)}")
 
         # 4) r_i_retr
-        r_i_retr = self.retriever(z_i, memory)
+        r_i_retr, retrieval_stats = self.retriever.retrieve_with_stats(z_i, memory)
         print(f"[runner] r_i_retr shape: {tuple(r_i_retr.shape)}")
+        print(f"[runner] retrieval selected prototype indices: {retrieval_stats['selected_prototype_indices']}")
+        print(f"[runner] retrieval similarity scores summary: {retrieval_stats['similarity_summary']}")
 
         # 5) z_i'
-        z_i_prime = self.modulation(z_i=z_i, r_i_rel=r_i_rel, r_i_retr=r_i_retr)
+        z_i_prime, modulation_stats = self.modulation.modulate_with_stats(
+            z_i=z_i, r_i_rel=r_i_rel, r_i_retr=r_i_retr
+        )
         print(f"[runner] z_i' shape: {tuple(z_i_prime.shape)}")
+        print(f"[runner] gate mean/std/min/max: {modulation_stats['gate']}")
+
+        delta_l2 = torch.linalg.norm(z_i_prime - z_i, dim=-1)
+        cosine = torch.nn.functional.cosine_similarity(z_i, z_i_prime, dim=-1)
+        delta_mean = float(delta_l2.mean().item()) if delta_l2.numel() > 0 else 0.0
+        cosine_mean = float(cosine.mean().item()) if cosine.numel() > 0 else 1.0
+        print(f"[runner] mean ||z_i' - z_i||: {delta_mean:.6f}")
+        print(f"[runner] mean cosine(z_i, z_i'): {cosine_mean:.6f}")
 
         # 6) mapping integrate
         positions = torch.tensor(
@@ -148,4 +160,10 @@ class RiskPipelineRunner:
             "z_i_prime": z_i_prime,
             "integrated_voxels": integrated_voxels,
             "map_state": self.mapper.export_state(),
+            "retrieval_stats": retrieval_stats,
+            "modulation_stats": {
+                **modulation_stats,
+                "delta_mean_l2": delta_mean,
+                "cosine_mean": cosine_mean,
+            },
         }
