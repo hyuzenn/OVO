@@ -25,6 +25,8 @@ from .risk_schema import (
     RiskAugmentedObjectDictionary,
 )
 
+SceneGraph = GraphDictionary
+
 
 def _to_int(value) -> int:
     if isinstance(value, int):
@@ -74,6 +76,39 @@ class SGFrontDataLoader:
         )
         obj_dict = RiskAugmentedObjectDictionary(objects=nodes)
         return obj_dict, graph
+
+    @staticmethod
+    def list_scan_ids(index_json: str | Path) -> List[str]:
+        """Return scan-id keys from an index-like JSON file."""
+        data = SGFrontDataLoader._read_json(index_json)
+        if isinstance(data, dict):
+            return [str(k) for k in data.keys()]
+        return []
+
+    def load_scan(
+        self,
+        scan_id: str | int,
+        relationships_index_json: str | Path,
+        obj_boxes_index_json: str | Path,
+    ) -> SceneGraph:
+        """Load one scan from JSON maps keyed by scan id."""
+        sid = str(scan_id)
+        rel_index = self._read_json(relationships_index_json)
+        box_index = self._read_json(obj_boxes_index_json)
+
+        rel_data = rel_index.get(sid, {})
+        box_data = box_index.get(sid, {})
+
+        boxes = self._parse_obj_boxes(box_data)
+        nodes = self._parse_objects(rel_data, boxes)
+        edges, adjacency, edge_vocab = self._parse_relationships(rel_data)
+
+        return SceneGraph(
+            nodes=nodes,
+            edges=edges,
+            edge_type_vocab=edge_vocab,
+            adjacency=adjacency,
+        )
 
     def to_tensor_batch(
         self,
