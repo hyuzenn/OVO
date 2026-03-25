@@ -28,8 +28,6 @@ class BBox3D:
     size: Point3D
     yaw: float
     corners_8: Optional[List[Point3D]] = None
-    volume: Optional[float] = None
-    aspect_ratio: Optional[float] = None
 
 
 @dataclass(slots=True)
@@ -106,8 +104,6 @@ class BBox3DDict(TypedDict, total=False):
     size: Point3D
     yaw: float
     corners_8: List[Point3D]
-    volume: float
-    aspect_ratio: float
 
 
 class Instance3DDict(TypedDict, total=False):

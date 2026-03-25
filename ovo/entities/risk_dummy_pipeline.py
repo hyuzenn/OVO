@@ -12,8 +12,6 @@ from typing import Tuple
 
 import torch
 
-from .failure_retrieval import FailureEpisodeRetrieval
-
 
 @dataclass(slots=True)
 class DummyBatch:
@@ -32,6 +30,29 @@ class DummyBatch:
     edge_idx: torch.Tensor
     edge_type: torch.Tensor
     pose_t: torch.Tensor
+
+
+class FailureEpisodeRetrieval(torch.nn.Module):
+    """Step-1 retrieval block.
+
+    Input:
+      z_i      [B, N, D]
+      bbox_geom[B, N, G]
+    Output:
+      r_i_retr [B, N, D]
+      p_i_retr [B, N, 1]
+    """
+
+    def __init__(self, dim: int, geom_dim: int):
+        super().__init__()
+        self.fuser = torch.nn.Linear(dim + geom_dim, dim)
+        self.prior = torch.nn.Linear(dim + geom_dim, 1)
+
+    def forward(self, z_i: torch.Tensor, bbox_geom: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = torch.cat([z_i, bbox_geom], dim=-1)
+        r_i_retr = torch.tanh(self.fuser(x))
+        p_i_retr = torch.sigmoid(self.prior(x))
+        return r_i_retr, p_i_retr
 
 
 class TripletGCNEncoder(torch.nn.Module):
@@ -177,11 +198,7 @@ def build_dummy_batch(
     return DummyBatch(z_i=z_i, bbox_geom=bbox_geom, edge_idx=edge_idx, edge_type=edge_type, pose_t=pose_t)
 
 
-def run_dummy_pipeline(
-    device: str = "cpu",
-    retrieval_cls: type[torch.nn.Module] = FailureEpisodeRetrieval,
-    retrieval_kwargs: dict | None = None,
-) -> dict[str, torch.Tensor]:
+def run_dummy_pipeline(device: str = "cpu") -> dict[str, torch.Tensor]:
     """Run end-to-end with random noise inputs.
 
     Returns a dictionary of intermediate/final tensors so callers can verify shape compatibility.
@@ -194,10 +211,8 @@ def run_dummy_pipeline(
 
     batch = build_dummy_batch(dim=dim, geom_dim=geom_dim, num_edge_types=num_edge_types, device=device)
 
-    retrieval_kwargs = retrieval_kwargs or {}
-
     pipeline = RiskAwarePipeline(
-        retriever=retrieval_cls(dim=dim, geom_dim=geom_dim, **retrieval_kwargs),
+        retriever=FailureEpisodeRetrieval(dim=dim, geom_dim=geom_dim),
         encoder=TripletGCNEncoder(dim=dim, num_edge_types=num_edge_types),
         modulator=FailureConditionedModulation(dim=dim),
         tsdf_updater=RiskAwareTSDFUpdater(dim=dim),
