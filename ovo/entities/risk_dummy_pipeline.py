@@ -12,10 +12,6 @@ from typing import Tuple
 
 import torch
 
-from .failure_retrieval import FailureEpisodeRetrieval
-from .triplet_gcn import TripletGCNEncoder
-from .failure_modulation import FailureConditionedModulation
-
 
 @dataclass(slots=True)
 class DummyBatch:
@@ -34,6 +30,101 @@ class DummyBatch:
     edge_idx: torch.Tensor
     edge_type: torch.Tensor
     pose_t: torch.Tensor
+
+
+class FailureEpisodeRetrieval(torch.nn.Module):
+    """Step-1 retrieval block.
+
+    Input:
+      z_i      [B, N, D]
+      bbox_geom[B, N, G]
+    Output:
+      r_i_retr [B, N, D]
+      p_i_retr [B, N, 1]
+    """
+
+    def __init__(self, dim: int, geom_dim: int):
+        super().__init__()
+        self.fuser = torch.nn.Linear(dim + geom_dim, dim)
+        self.prior = torch.nn.Linear(dim + geom_dim, 1)
+
+    def forward(self, z_i: torch.Tensor, bbox_geom: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = torch.cat([z_i, bbox_geom], dim=-1)
+        r_i_retr = torch.tanh(self.fuser(x))
+        p_i_retr = torch.sigmoid(self.prior(x))
+        return r_i_retr, p_i_retr
+
+
+class TripletGCNEncoder(torch.nn.Module):
+    """Step-2 context encoder.
+
+    Input:
+      node_feat [B, N, D]
+      edge_idx  [B, E, 2]
+      edge_type [B, E]
+    Output:
+      r_i_rel   [B, N, D]
+    """
+
+    def __init__(self, dim: int, num_edge_types: int):
+        super().__init__()
+        self.edge_emb = torch.nn.Embedding(num_edge_types, dim)
+        self.msg_mlp = torch.nn.Linear(dim * 2, dim)
+
+    def forward(self, node_feat: torch.Tensor, edge_idx: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
+        bsz, n_nodes, dim = node_feat.shape
+        n_edges = edge_idx.shape[1]
+        out = torch.zeros_like(node_feat)
+
+        for b in range(bsz):
+            src = edge_idx[b, :, 0].long()  # [E]
+            dst = edge_idx[b, :, 1].long()  # [E]
+            e_emb = self.edge_emb(edge_type[b].long())  # [E, D]
+            msg = torch.cat([node_feat[b, src], e_emb], dim=-1)  # [E, 2D]
+            msg = torch.tanh(self.msg_mlp(msg))  # [E, D]
+            out[b].index_add_(0, dst, msg)
+
+        deg = torch.zeros((bsz, n_nodes, 1), device=node_feat.device)
+        one = torch.ones((bsz, n_edges, 1), device=node_feat.device)
+        for b in range(bsz):
+            deg[b].index_add_(0, edge_idx[b, :, 1].long(), one[b])
+
+        r_i_rel = out / deg.clamp_min(1.0)
+        return r_i_rel
+
+
+class FailureConditionedModulation(torch.nn.Module):
+    """Step-3 gated residual modulation.
+
+    Input:
+      z_i       [B, N, D]
+      r_i_retr  [B, N, D]
+      r_i_rel   [B, N, D]
+      p_f       [B, N, 1]
+    Output:
+      z_i_prime [B, N, D]
+    """
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.gate = torch.nn.Linear(dim * 2 + 1, dim)
+        self.delta = torch.nn.Linear(dim * 3, dim)
+
+    def forward(
+        self,
+        z_i: torch.Tensor,
+        r_i_retr: torch.Tensor,
+        r_i_rel: torch.Tensor,
+        p_f: torch.Tensor,
+    ) -> torch.Tensor:
+        gate_in = torch.cat([p_f, r_i_retr, r_i_rel], dim=-1)
+        g_i = torch.sigmoid(self.gate(gate_in))
+
+        delta_in = torch.cat([z_i, r_i_retr, r_i_rel], dim=-1)
+        delta_i = torch.tanh(self.delta(delta_in))
+
+        z_i_prime = z_i + g_i * delta_i
+        return z_i_prime
 
 
 class RiskAwareTSDFUpdater(torch.nn.Module):
@@ -107,13 +198,7 @@ def build_dummy_batch(
     return DummyBatch(z_i=z_i, bbox_geom=bbox_geom, edge_idx=edge_idx, edge_type=edge_type, pose_t=pose_t)
 
 
-def run_dummy_pipeline(
-    device: str = "cpu",
-    retrieval_cls: type[torch.nn.Module] = FailureEpisodeRetrieval,
-    retrieval_kwargs: dict | None = None,
-    encoder_cls: type[torch.nn.Module] = TripletGCNEncoder,
-    encoder_kwargs: dict | None = None,
-) -> dict[str, torch.Tensor]:
+def run_dummy_pipeline(device: str = "cpu") -> dict[str, torch.Tensor]:
     """Run end-to-end with random noise inputs.
 
     Returns a dictionary of intermediate/final tensors so callers can verify shape compatibility.
@@ -126,12 +211,9 @@ def run_dummy_pipeline(
 
     batch = build_dummy_batch(dim=dim, geom_dim=geom_dim, num_edge_types=num_edge_types, device=device)
 
-    retrieval_kwargs = retrieval_kwargs or {}
-    encoder_kwargs = encoder_kwargs or {}
-
     pipeline = RiskAwarePipeline(
-        retriever=retrieval_cls(dim=dim, geom_dim=geom_dim, **retrieval_kwargs),
-        encoder=encoder_cls(dim=dim, num_edge_types=num_edge_types, **encoder_kwargs),
+        retriever=FailureEpisodeRetrieval(dim=dim, geom_dim=geom_dim),
+        encoder=TripletGCNEncoder(dim=dim, num_edge_types=num_edge_types),
         modulator=FailureConditionedModulation(dim=dim),
         tsdf_updater=RiskAwareTSDFUpdater(dim=dim),
     )
