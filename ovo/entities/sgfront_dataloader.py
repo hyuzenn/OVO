@@ -25,6 +25,7 @@ from .risk_schema import (
     Instance3D,
     RelationTriplet,
     RiskAugmentedObjectDictionary,
+    SceneGraph,
 )
 
 
@@ -85,12 +86,37 @@ class SGFrontDataLoader:
         relationships_json: str | Path,
         obj_boxes_json: str | Path,
     ) -> Tuple[RiskAugmentedObjectDictionary, GraphDictionary]:
+        scene_graph = self.load_scene_graph(
+            relationships_json=relationships_json,
+            obj_boxes_json=obj_boxes_json,
+            scan_id=None,
+            scan_index=0,
+        )
+        obj_dict = RiskAugmentedObjectDictionary(objects=scene_graph.graph.nodes)
+        return obj_dict, scene_graph.graph
+
+    def load_scene_graph(
+        self,
+        relationships_json: str | Path,
+        obj_boxes_json: str | Path,
+        scan_id: str | None = None,
+        scan_index: int = 0,
+    ) -> SceneGraph:
         rel_data = self._read_json(relationships_json)
         box_data = self._read_json(obj_boxes_json)
 
-        boxes = self._parse_obj_boxes(box_data)
-        nodes = self._parse_objects(rel_data, boxes)
-        edges, adjacency, edge_vocab = self._parse_relationships(rel_data)
+        rel_scans = self._extract_relationship_scans(rel_data)
+        box_scans = self._extract_box_scans(box_data)
+        selected_scan_id, rel_scan, box_scan = self._select_scan(
+            rel_scans=rel_scans,
+            box_scans=box_scans,
+            scan_id=scan_id,
+            scan_index=scan_index,
+        )
+
+        boxes = self._parse_obj_boxes(box_scan)
+        nodes = self._parse_objects(rel_scan, boxes)
+        edges, adjacency, edge_vocab = self._parse_relationships(rel_scan)
 
         graph = GraphDictionary(
             nodes=nodes,
@@ -98,8 +124,7 @@ class SGFrontDataLoader:
             edge_type_vocab=edge_vocab,
             adjacency=adjacency,
         )
-        obj_dict = RiskAugmentedObjectDictionary(objects=nodes)
-        return obj_dict, graph
+        return SceneGraph(scan_id=selected_scan_id, graph=graph)
 
     def to_tensor_batch(
         self,
@@ -168,6 +193,86 @@ class SGFrontDataLoader:
     def _read_json(path: str | Path) -> dict:
         with Path(path).open("r", encoding="utf-8") as f:
             return json.load(f)
+
+    @staticmethod
+    def _extract_relationship_scans(rel_data: dict) -> Dict[str, dict]:
+        if isinstance(rel_data, dict) and "objects" in rel_data and "relationships" in rel_data:
+            scan_key = str(rel_data.get("scan") or rel_data.get("scan_id") or "scan_0")
+            return {scan_key: rel_data}
+
+        scans = rel_data.get("scans", []) if isinstance(rel_data, dict) else []
+        if isinstance(scans, list):
+            out: Dict[str, dict] = {}
+            for i, item in enumerate(scans):
+                if not isinstance(item, dict):
+                    continue
+                sid = str(item.get("scan") or item.get("scan_id") or item.get("id") or f"scan_{i}")
+                out[sid] = item
+            if out:
+                return out
+        raise ValueError("Invalid relationships JSON format: expected single scan or `scans` list.")
+
+    @staticmethod
+    def _looks_like_box_payload(value: dict) -> bool:
+        return "param7" in value or "8points" in value or "8_points" in value
+
+    def _extract_box_scans(self, box_data: dict) -> Dict[str, dict]:
+        if not isinstance(box_data, dict):
+            raise ValueError("Invalid obj_boxes JSON format: expected dictionary.")
+
+        if box_data and all(isinstance(v, dict) and self._looks_like_box_payload(v) for v in box_data.values()):
+            return {"scan_0": box_data}
+
+        scans = box_data.get("scans", [])
+        if isinstance(scans, list):
+            out: Dict[str, dict] = {}
+            for i, item in enumerate(scans):
+                if not isinstance(item, dict):
+                    continue
+                sid = str(item.get("scan") or item.get("scan_id") or item.get("id") or f"scan_{i}")
+                boxes = item.get("obj_boxes") or item.get("boxes") or item.get("objects")
+                if isinstance(boxes, dict):
+                    out[sid] = boxes
+            if out:
+                return out
+
+        scan_mapped = {
+            str(k): v
+            for k, v in box_data.items()
+            if isinstance(v, dict)
+            and v
+            and all(isinstance(obj_payload, dict) and self._looks_like_box_payload(obj_payload) for obj_payload in v.values())
+        }
+        if scan_mapped:
+            return scan_mapped
+
+        raise ValueError("Invalid obj_boxes JSON format: could not parse scan/object boxes.")
+
+    @staticmethod
+    def _select_scan(
+        rel_scans: Dict[str, dict],
+        box_scans: Dict[str, dict],
+        scan_id: str | None,
+        scan_index: int,
+    ) -> Tuple[str, dict, dict]:
+        common_scan_ids = sorted(set(rel_scans.keys()) & set(box_scans.keys()))
+        if not common_scan_ids:
+            if len(rel_scans) == 1 and len(box_scans) == 1:
+                rel_id = next(iter(rel_scans))
+                box_id = next(iter(box_scans))
+                return rel_id, rel_scans[rel_id], box_scans[box_id]
+            raise ValueError("No matching scan IDs between relationships and obj_boxes JSON files.")
+
+        if scan_id is not None:
+            if scan_id not in common_scan_ids:
+                raise ValueError(f"Requested scan_id '{scan_id}' not found. Available: {common_scan_ids[:10]}")
+            selected_id = scan_id
+        else:
+            if scan_index < 0 or scan_index >= len(common_scan_ids):
+                raise IndexError(f"scan_index={scan_index} out of range for {len(common_scan_ids)} available scans.")
+            selected_id = common_scan_ids[scan_index]
+
+        return selected_id, rel_scans[selected_id], box_scans[selected_id]
 
     def _parse_objects(self, rel_data: dict, boxes: Dict[int, BBox3D]) -> Dict[int, Instance3D]:
         objects = rel_data.get("objects", {})

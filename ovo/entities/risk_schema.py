@@ -194,6 +194,27 @@ class GraphDictionary:
 
 
 @dataclass(slots=True)
+class SceneGraph:
+    """Selected scene graph with a convenience summary."""
+
+    scan_id: str
+    graph: GraphDictionary
+
+    def summary(self) -> str:
+        node_count = len(self.graph.nodes)
+        edge_count = len(self.graph.edges)
+        relation_types = len(self.graph.edge_type_vocab)
+        avg_out_degree = 0.0
+        if node_count > 0:
+            avg_out_degree = edge_count / node_count
+        return (
+            f"SceneGraph(scan_id='{self.scan_id}', "
+            f"nodes={node_count}, edges={edge_count}, "
+            f"relation_types={relation_types}, avg_out_degree={avg_out_degree:.2f})"
+        )
+
+
+@dataclass(slots=True)
 class RiskAugmentedObjectDictionary:
     """Object dictionary keyed by instance id."""
 
