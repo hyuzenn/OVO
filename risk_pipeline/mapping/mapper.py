@@ -66,6 +66,10 @@ class RiskFeatureMapper:
     @staticmethod
     def _extract_positions(bbox_or_position, *, assume_bbox: bool) -> np.ndarray:
         arr = to_numpy(bbox_or_position).astype(np.float64)
+        print(
+            "[mapper] _extract_positions input "
+            f"type={type(bbox_or_position).__name__} shape={arr.shape} assume_bbox={assume_bbox}"
+        )
         if arr.ndim != 2:
             raise ValueError(f"Expected shape [N, 3] or [N, 6], got {arr.shape}")
 
